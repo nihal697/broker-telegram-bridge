@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily Dhan token refresh (07:55 IST)
+
+[Timer]
+OnCalendar=07:55 Asia/Kolkata
+Persistent=true
+
+[Install]
+WantedBy=timers.target

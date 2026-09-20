@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Dhan token refresh (one-shot)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/dhan-telegram
+EnvironmentFile=/opt/dhan-telegram/.env
+ExecStart=/opt/dhan-telegram/venv/bin/python auth_refresh.py
+StandardOutput=journal
+StandardError=journal

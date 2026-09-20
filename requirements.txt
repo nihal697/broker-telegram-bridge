@@ -1,0 +1,9 @@
+# Dhan -> Telegram trade-call bridge (send immediately, edit when SL/target arrive)
+# Python 3.11+ (tested 3.13, runs on Oracle A1 Ubuntu ARM too)
+dhanhq>=2.2.0
+websockets>=14.0
+python-telegram-bot>=21.0
+python-dotenv>=1.0
+pyotp>=2.9
+jinja2>=3.1
+requests>=2.31

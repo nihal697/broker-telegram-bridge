@@ -1,0 +1,27 @@
+# secrets
+.env
+*.db
+*.db-shm
+*.db-wal
+data/state.db
+data/token.json
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# os
+.DS_Store
+Thumbs.db
+
+# local test artifacts
+out.txt
+tmp.txt
+render_out.html
+render_repr.txt
+debug.html
