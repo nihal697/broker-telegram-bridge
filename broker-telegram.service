@@ -1,0 +1,17 @@
+[Unit]
+Description=Broker -> Telegram trade-call bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/broker-telegram
+EnvironmentFile=/opt/broker-telegram/.env
+ExecStart=/opt/broker-telegram/venv/bin/python main.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

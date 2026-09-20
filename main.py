@@ -109,16 +109,18 @@ class Bridge:
 
 
 async def _amain():
-    from dhan_ws import run_forever
-
     s = load_settings()
-    if not s.dhan_client_id:
-        raise SystemExit("DHAN_CLIENT_ID missing — copy .env.example to .env first")
+    # broker-agnostic: keep DHAN_* error message for backward compat
+    client_id = s.broker_client_id or s.dhan_client_id
+    token = s.broker_access_token or s.dhan_access_token
+    if not client_id:
+        raise SystemExit("BROKER_CLIENT_ID (or DHAN_CLIENT_ID) missing — copy .env.example to .env first")
     bridge = Bridge(s)
 
     def current_token():
-        # re-read .env (auth_refresh.py rewrites it daily)
-        return load_settings().dhan_access_token or s.dhan_access_token
+        # re-read .env (auth_refresh.py rewrites it daily for Dhan)
+        st = load_settings()
+        return st.broker_access_token or st.dhan_access_token or s.broker_access_token or s.dhan_access_token
 
     async def _commands():
         if not s.telegram_bot_token:
@@ -127,11 +129,35 @@ async def _amain():
         await poll_telegrams(Bot(token=s.telegram_bot_token), s.owner_id,
                              bridge.store)
 
-    await asyncio.gather(
-        run_forever(s.order_ws_url, s.dhan_client_id,
-                    s.dhan_access_token, bridge.handle_event, current_token),
-        _commands(),
-    )
+    # broker dispatch — Dhan is reference, others are pluggable
+    if s.broker in ("dhan", ""):
+        from brokers.dhan import run_forever  # or legacy dhan_ws shim
+    elif s.broker == "angel":
+        from brokers.angel import run_forever
+    elif s.broker == "kite":
+        from brokers.kite import run_forever
+    elif s.broker == "generic":
+        from brokers.generic import run_forever
+    else:
+        # fallback: try brokers/<broker>.py dynamically
+        import importlib
+
+        try:
+            mod = importlib.import_module(f"brokers.{s.broker}")
+            run_forever = getattr(mod, "run_forever")
+        except Exception as e:
+            raise SystemExit(f"Unknown BROKER={s.broker!r}: {e}") from e
+
+    if s.broker in ("dhan", ""):
+        await asyncio.gather(
+            run_forever(s.order_ws_url, client_id, token, bridge.handle_event, current_token),
+            _commands(),
+        )
+    else:
+        await asyncio.gather(
+            run_forever(bridge.handle_event, current_token),
+            _commands(),
+        )
 
 
 def main():

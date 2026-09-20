@@ -34,9 +34,22 @@ def test_stranger_blocked():
 
 
 def test_owner_test_renders_sample():
+    import os as _os
+    _os.environ["TELEGRAM_CHANNEL_ID"] = _os.getenv("TELEGRAM_CHANNEL_ID") or "-100test"
     b = FakeBot()
+    # FakeBot needs to mimic channel send — handle_dm calls bot.send_message for channel too
+    orig_send = b.send_message
+
+    async def _fake_send(chat_id=None, text=None, **kwargs):
+        # record and return object with message_id for /test path
+        b.sent.append(text)
+        class _M:
+            message_id = 999
+        return _M()
+
+    b.send_message = _fake_send
     run(oc.handle_dm(b, "222", 111, 222, "/test"))
-    assert "PAPER TRADE" in b.sent[0] and "179.25" in b.sent[0]
+    assert any("PAPER TRADE" in s and "179.25" in s for s in b.sent)
 
 
 def test_template_save_validate_and_show(tmp_path=None):

@@ -29,6 +29,11 @@ def _get_bool(name: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class Settings:
+    broker: str = "dhan"  # dhan | angel | kite | generic
+    # generic broker creds (preferred) — fall back to DHAN_* for backward compat
+    broker_client_id: str = ""
+    broker_access_token: str = ""
+    # legacy Dhan names kept as aliases
     dhan_client_id: str = ""
     dhan_access_token: str = ""
     dhan_pin: str = ""
@@ -47,9 +52,16 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    broker = _get("BROKER", "dhan").lower() or "dhan"
+    # prefer BROKER_* but fall back to DHAN_* so existing .env keeps working
+    b_client = _get("BROKER_CLIENT_ID") or _get("DHAN_CLIENT_ID")
+    b_token = _get("BROKER_ACCESS_TOKEN") or _get("DHAN_ACCESS_TOKEN")
     return Settings(
-        dhan_client_id=_get("DHAN_CLIENT_ID"),
-        dhan_access_token=_get("DHAN_ACCESS_TOKEN"),
+        broker=broker,
+        broker_client_id=b_client,
+        broker_access_token=b_token,
+        dhan_client_id=_get("DHAN_CLIENT_ID") or b_client,
+        dhan_access_token=_get("DHAN_ACCESS_TOKEN") or b_token,
         dhan_pin=_get("DHAN_PIN"),
         dhan_totp_secret=_get("DHAN_TOTP_SECRET"),
         telegram_bot_token=_get("TELEGRAM_BOT_TOKEN"),
@@ -62,4 +74,5 @@ def load_settings() -> Settings:
         dry_run=_get_bool("DRY_RUN", True),
         db_path=_get("DB_PATH", "data/state.db"),
         token_json=_get("TOKEN_JSON", "data/token.json"),
+        order_ws_url=_get("ORDER_WS_URL", "wss://api-order-update.dhan.co"),
     )
