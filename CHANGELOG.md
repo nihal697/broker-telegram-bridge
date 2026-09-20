@@ -3,6 +3,15 @@
 All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog and Semantic Versioning.
 
+## [1.0.1] - 2026-09-20
+
+Broker-agnostic positioning — same core, now documented for any broker.
+
+- README generalized: core is broker-free, Dhan is reference adapter.
+- Add `docs/BROKERS.md` (canonical dict, Angel/Zerodha/webhook examples).
+- Repo renamed `dhan-telegram-bridge` → `broker-telegram-bridge` (redirect preserved).
+- No code change to live path, 42/42 tests still pass.
+
 ## [1.0.0] - 2026-09-20
 
 First public release — hardened live path verified with real Telegram messages.
@@ -28,4 +37,5 @@ First public release — hardened live path verified with real Telegram messages
 ### Security
 - `.env` is gitignored. `.env.example` contains only placeholders. No tokens committed.
 
-[1.0.0]: https://github.com/nihal697/dhan-telegram-bridge/releases/tag/v1.0.0
+[1.0.1]: https://github.com/nihal697/broker-telegram-bridge/releases/tag/v1.0.1
+[1.0.0]: https://github.com/nihal697/broker-telegram-bridge/releases/tag/v1.0.0
