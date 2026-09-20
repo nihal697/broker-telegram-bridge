@@ -37,11 +37,9 @@ def test_owner_test_renders_sample():
     import os as _os
     _os.environ["TELEGRAM_CHANNEL_ID"] = _os.getenv("TELEGRAM_CHANNEL_ID") or "-100test"
     b = FakeBot()
-    # FakeBot needs to mimic channel send — handle_dm calls bot.send_message for channel too
     orig_send = b.send_message
 
     async def _fake_send(chat_id=None, text=None, **kwargs):
-        # record and return object with message_id for /test path
         b.sent.append(text)
         class _M:
             message_id = 999
@@ -53,17 +51,22 @@ def test_owner_test_renders_sample():
 
 
 def test_template_save_validate_and_show(tmp_path=None):
-    import tempfile
-    from pathlib import Path
-    oc.TEMPLATE_PATH = Path(tempfile.mkdtemp()) / "template.txt"
+    # in-memory only, no file
+    oc.reset_template()
     b = FakeBot()
-    run(oc.handle_dm(b, "222", 111, 222, "/template **{side}** {bogus}"))
+    run(oc.handle_dm(b, "222", 111, 222, "/settemplate **{side}** {bogus}"))
     assert "Unknown placeholders: bogus" in b.sent[0]
-    assert not oc.TEMPLATE_PATH.exists()
-    run(oc.handle_dm(b, "222", 111, 222, "/template **{side}** `{entry}`"))
+    assert oc.load_template() != "**{side}** {bogus}"
+    run(oc.handle_dm(b, "222", 111, 222, "/settemplate **{side}** `{entry}`"))
     assert "Template saved" in b.sent[1]
     assert oc.load_template() == "**{side}** `{entry}`"
     run(oc.handle_dm(b, "222", 111, 222, "/showtemplate"))
     assert b.sent[-1] == "**{side}** `{entry}`"
-    run(oc.handle_dm(b, "222", 111, 222, "/default"))
-    assert oc.load_template() != "**{side}** `{entry}`"
+    # alias /template should also work
+    run(oc.handle_dm(b, "222", 111, 222, "/template **{side}** `{entry}` alias"))
+    assert oc.load_template() == "**{side}** `{entry}` alias"
+    # alias /setdefault same as /settemplate
+    run(oc.handle_dm(b, "222", 111, 222, "/setdefault **{side}** default"))
+    assert oc.load_template() == "**{side}** default"
+    oc.reset_template()
+    assert oc.load_template() != "**{side}** default"
