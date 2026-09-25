@@ -5,30 +5,42 @@ Only OWNER_ID may change anything; /id answers anyone (bootstrap helper).
 
 Commands (DM the bot):
   /id                    reply with your user id (put it in .env as OWNER_ID)
-  /settemplate <text...>  set template in memory (also alias: /template, /setdefault)
+  /settemplate <text...>  set template (alias: /template)
                          or reply /settemplate to a message containing it.
                          Validates placeholders, shows preview.
   /settemplate           (no args) -> bot asks you to send the template next;
                          your next message is saved as the template.
-  /setdefault            alias for /settemplate (same behavior, in-memory only)
   /showtemplate          send back the active template source
   /preview               render a sample call with the active template (DM only)
   /test                  post a sample call to the channel (owner-only)
 
-Template is kept in memory only (server-based, no local data file).
-Edits apply to the NEXT call without restarts, but reset on process restart
-to the built-in default. No /default command (removed per spec).
+Template is persisted to data/template.txt (and kept in memory for speed).
+Edits survive restarts/reboots — no need to /settemplate again.
+Falls back to built-in DEFAULT_TEMPLATE if no file and no memory.
 """
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from formatter import DEFAULT_TEMPLATE, Position, render_call
 from template_engine import validate
 
-# In-memory only — no filesystem persistence per user request.
-# Server-based only, reset on restart.
+# Persisted: file + in-memory cache. File is source of truth across restarts.
 _mem_template: str | None = None
+
+_TEMPLATE_PATH = Path(__file__).resolve().parent / "data" / "template.txt"
+
+
+def _read_file_template() -> str | None:
+    try:
+        if _TEMPLATE_PATH.exists():
+            txt = _TEMPLATE_PATH.read_text(encoding="utf-8")
+            if txt.strip():
+                return txt
+    except Exception:
+        pass
+    return None
 
 SAMPLE = Position(symbol="NIFTY 24500 CE", side="BUY", entry_price=142.5,
                    qty=50, entry_time="2026-09-19 09:30:02", sl=118,
@@ -40,21 +52,36 @@ PENDING_PREFIX = "pending_template:"
 
 
 def load_template() -> str:
-    """Active template: in-memory if set, else built-in default."""
+    """Active template: in-memory if set, else file, else built-in default."""
     if _mem_template is not None:
         return _mem_template
+    file_tpl = _read_file_template()
+    if file_tpl is not None:
+        return file_tpl
     return DEFAULT_TEMPLATE
 
 
 def save_template(text: str) -> None:
     global _mem_template
     _mem_template = text
+    # persist to file so it survives restarts/reboots — no more re-sending after restart
+    try:
+        _TEMPLATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _TEMPLATE_PATH.write_text(text, encoding="utf-8")
+    except Exception:
+        pass
+    # also load into memory for immediate use
 
 
-# kept for test compatibility — no file to delete, just clear memory
+# kept for test compatibility — clear memory + file
 def reset_template() -> None:
     global _mem_template
     _mem_template = None
+    try:
+        if _TEMPLATE_PATH.exists():
+            _TEMPLATE_PATH.unlink()
+    except Exception:
+        pass
 
 
 def _pending_key(user_id) -> str:
@@ -186,7 +213,7 @@ def _template_from_message(msg) -> str:
 
 async def handle_dm(bot, owner_id: str, chat_id, user_id, text: str,
                     reply_to_text: str = "", store=None) -> None:
-    """Route one DM. In-memory only, server-based."""
+    """Route one DM. Persisted to data/template.txt + in-memory cache."""
     cmd, args = extract_command(text)
     if cmd == "id":
         await bot.send_message(chat_id=chat_id,
@@ -296,8 +323,8 @@ async def handle_dm(bot, owner_id: str, chat_id, user_id, text: str,
                                    text=f"Channel post failed — HTML parse error: {e}")
         except Exception as e:
             await bot.send_message(chat_id=chat_id, text=f"Channel post failed: {e}")
-    elif cmd in ("settemplate", "setdefault", "template"):
-        # /setdefault is primary, /settemplate and /template are aliases — same in-memory behavior
+    elif cmd in ("settemplate", "template"):
+        # /settemplate is primary, /template is alias — persistent to data/template.txt
         new_tpl = args or reply_to_text
         if not new_tpl:
             _set_pending(store, user_id)
@@ -329,7 +356,7 @@ async def handle_dm(bot, owner_id: str, chat_id, user_id, text: str,
     else:
         await bot.send_message(
             chat_id=chat_id,
-            text="Commands: /id /settemplate /setdefault /showtemplate /preview /test")
+            text="Commands: /id /settemplate /showtemplate /preview /test")
 
 
 async def poll_telegrams(bot, owner_id: str, store) -> None:

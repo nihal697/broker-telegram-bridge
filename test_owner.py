@@ -65,8 +65,10 @@ def test_template_save_validate_and_show(tmp_path=None):
     # alias /template should also work
     run(oc.handle_dm(b, "222", 111, 222, "/template **{side}** `{entry}` alias"))
     assert oc.load_template() == "**{side}** `{entry}` alias"
-    # alias /setdefault same as /settemplate
+    # /setdefault removed — should not change template, should show help
+    before = oc.load_template()
     run(oc.handle_dm(b, "222", 111, 222, "/setdefault **{side}** default"))
-    assert oc.load_template() == "**{side}** default"
+    assert oc.load_template() == before  # not saved
+    assert "Commands:" in b.sent[-1] and "/setdefault" not in b.sent[-1].lower() or "setdefault" not in oc.load_template().lower()
     oc.reset_template()
     assert oc.load_template() != "**{side}** default"

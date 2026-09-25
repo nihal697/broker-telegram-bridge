@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env", override=True)
 
 
 def _get(name: str, default: str = "") -> str:
@@ -52,6 +52,7 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    load_dotenv(BASE_DIR / ".env", override=True)
     broker = _get("BROKER", "dhan").lower() or "dhan"
     # prefer BROKER_* but fall back to DHAN_* so existing .env keeps working
     b_client = _get("BROKER_CLIENT_ID") or _get("DHAN_CLIENT_ID")

@@ -47,6 +47,9 @@ class Bridge:
 
     async def handle_event(self, update: dict):
         ev = normalize(update)
+        log.info("handle_event: symbol=%s side=%s status=%s order_no=%s qty=%s price=%s trigger=%s",
+                 ev.get("symbol"), ev.get("side"), ev.get("status"), ev.get("order_no"),
+                 ev.get("qty"), ev.get("price"), ev.get("trigger"))
         if self.s.only_traded and ev["status"] not in (
                 "TRADED", "PART_TRADED", "PENDING", "TRANSIT",
                 "CANCELLED", "REJECTED", "EXPIRED"):
@@ -120,7 +123,20 @@ async def _amain():
     def current_token():
         # re-read .env (auth_refresh.py rewrites it daily for Dhan)
         st = load_settings()
-        return st.broker_access_token or st.dhan_access_token or s.broker_access_token or s.dhan_access_token
+        tok = st.broker_access_token or st.dhan_access_token or s.broker_access_token or s.dhan_access_token
+        try:
+            from pathlib import Path
+            import json as _json
+            from config import BASE_DIR
+            tpath = Path(st.token_json) if hasattr(st, "token_json") and st.token_json else Path("data/token.json")
+            if not tpath.is_absolute():
+                tpath = BASE_DIR / tpath
+            if tpath.exists():
+                meta = _json.loads(tpath.read_text(encoding="utf-8"))
+                tok = meta.get("accessToken") or tok
+        except Exception as e:
+            log.warning("failed reading token.json: %s", e)
+        return tok
 
     async def _commands():
         if not s.telegram_bot_token:
