@@ -20,6 +20,7 @@ class Position:
     entry_status: str = "TRADED"
     entry_time: str = ""
     qty: int = 0
+    lot_size: int = 0  # e.g. 65 for NIFTY, 0 = unknown
     product: str = ""
     order_id: str = ""
     sl: float | None = None
@@ -30,7 +31,7 @@ class Position:
     remarks: str = ""
 
     _FIELDS = ("symbol", "side", "entry_price", "entry_status", "entry_time",
-               "qty", "product", "order_id", "sl", "t1", "t2", "trail",
+               "qty", "lot_size", "product", "order_id", "sl", "t1", "t2", "trail",
                "exit_info", "remarks")
 
     def to_dict(self) -> dict:

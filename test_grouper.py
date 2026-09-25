@@ -68,7 +68,7 @@ def test_partial_exit_keeps_slot_open_silently():
     a, p = tr.handle({"Symbol": "NIFTY 24500 CE", "TxnType": "S", "TradedPrice": 150,
                       "OrderType": "LIMIT", "Status": "TRADED", "OrderNo": "T1",
                       "Quantity": 25})
-    assert a == "edit" and p.exit_info == ""  # no target-hit label by design
+    assert a == "edit" and "Booked" in p.exit_info  # partial exit now labelled
     assert p.entry_price == 142.5  # entry average untouched
 
 

@@ -38,6 +38,31 @@ def _lvl_str(lvl) -> str:
         return str(lvl)
 
 
+def _lots(qty, lot_size=0) -> str:
+    """Lot count — qty is total quantity, lot_size e.g. 65 for NIFTY."""
+    try:
+        q = int(qty)
+        ls = int(lot_size) if lot_size else 0
+        if ls and ls > 0:
+            # exact division → integer lots
+            if q % ls == 0:
+                n = q // ls
+            else:
+                n = round(q / ls, 2)
+                if isinstance(n, float) and n.is_integer():
+                    n = int(n)
+        else:
+            n = q
+    except (TypeError, ValueError):
+        return str(qty)
+    return "1 lot" if n == 1 else f"{n} lots"
+
+
+def _append_exit(current: str, line: str) -> str:
+    """Keep exit history — every fill appends its own line."""
+    return f"{current}\n{line}" if current else line
+
+
 def _num(v, default=None):
     try:
         if v is None or v == "":
@@ -66,11 +91,13 @@ def normalize(update: dict) -> dict:
     algo = str(g("AlgoOrdNo", "algoOrdNo", "algoId") or "")
     leg = str(g("legName", "LegName", "leg", "legNo") or "").upper()
     otype = str(g("OrderType", "orderType", "order_type") or "").upper()
-    price = _num(g("TradedPrice", "tradedPrice", "AvgTradedPrice", "avgTradedPrice", "Price", "price"))
+    price = _num(g("TradedPrice", "tradedPrice", "AvgTradedPrice", "avgTradedPrice", "Price", "price",
+               "limitPrice", "orderPrice"))
     if not price:
         price = _num(g("targetPrice", "stopLossPrice"))
-    trigger = _num(g("TriggerPrice", "triggerPrice", "trigger_price"))
-    qty = int(_num(g("Quantity", "quantity", "qty", "tradedQty"), 0) or 0)
+    trigger = _num(g("TriggerPrice", "triggerPrice", "trigger_price", "stopPrice", "triggerRate"))
+    fqty = _num(g("tradedQty", "TradedQty", "filledQty", "fillQuantity"))
+    qty = int(fqty if fqty else (_num(g("Quantity", "quantity", "qty"), 0) or 0))
     # fallback qty from remainingQuantity+tradedQty if needed
     if qty == 0:
         qty = int(_num(g("remainingQuantity"), 0) or 0)
@@ -80,12 +107,14 @@ def normalize(update: dict) -> dict:
     # extra fields for SL/target detection (Dhan Super Order VTT)
     correlationId = str(g("correlationId", "CorrelationId") or "")
     orderPlatform = str(g("orderPlatform", "OrderPlatform") or "")
+    lot_size = int(_num(g("lotSize", "LotSize", "lot_size"), 0) or 0)
     return {
         "side": side, "status": status, "symbol": str(symbol), "order_no": order_no,
         "algo": algo, "leg": leg, "otype": otype, "price": price, "trigger": trigger,
         "qty": qty, "product": product, "remarks": remarks, "ts": str(ts or ""),
         "target_price": _num(update.get("targetPrice")), "sl_price": _num(update.get("stopLossPrice")),
         "correlationId": correlationId, "orderPlatform": orderPlatform,
+        "lot_size": lot_size,
         "now": time.time(),
     }
 
@@ -107,6 +136,10 @@ class PositionTracker:
         self.window_sec = window_sec
         self._by_algo: dict[str, _OpenSlot] = {}
         self._by_sym: dict[str, _OpenSlot] = {}  # key: SYMBOL|ENTRY_SIDE
+        # SL level seen while there was no open slot yet (bracket legs can be
+        # delivered before the entry TRADED). Applied to the next entry.
+        # symbol -> (level, timestamp)
+        self._pending_sl: dict[str, tuple[float, float]] = {}
 
     @staticmethod
     def _sym_key(symbol: str, entry_side: str) -> str:
@@ -118,6 +151,10 @@ class PositionTracker:
         if "STOP_LOSS" in ev["otype"]:
             return True
         if ev["sl_price"]:
+            return True
+        # Any working order carrying a trigger price is a stop — entry legs
+        # never have one. Catches SL legs with unfamiliar OrderType spellings.
+        if ev["trigger"]:
             return True
         # Dhan Super Order VTT: leg 2 = SL, "VTT SL" platform, SQROFF correlation, TRIGGERED status
         if ev.get("status") == "TRIGGERED":
@@ -136,6 +173,23 @@ class PositionTracker:
             if ev["leg"] == "2":
                 return True
         return False
+
+    def _stop_like(self, slot: _OpenSlot, ev: dict) -> bool:
+        """Opposite-side WORKING limit on the losing side of the entry is a
+        stop-loss leg for the slot (e.g. a Super Order SL that Dhan delivers
+        as a plain limit with no leg/trigger/remarks markers). Winning-side
+        limits are targets and must NOT share this branch. Fills are
+        exits/hits and are handled below."""
+        if ev["status"] == "TRADED":
+            return False
+        if ev["side"] == slot.entry_side:
+            return False
+        lvl, entry = ev["price"], slot.position.entry_price
+        if lvl is None or entry is None:
+            return False
+        if slot.entry_side == "BUY":
+            return lvl < entry
+        return lvl > entry
 
     def _is_target(self, ev: dict) -> bool:
         if ev["leg"] == "TARGET_LEG":
@@ -159,6 +213,16 @@ class PositionTracker:
 
         slot = self._find_slot(ev)
         if slot is None or slot.closed:
+            # Lone SL working leg with no open slot (bracket leg arriving before
+            # the entry fill): don't open a spurious call — remember the level
+            # so the entry that follows picks it up. Non-terminal statuses only;
+            # a fill/cancel must not poison the next entry.
+            if self._is_sl(ev) and ev["status"] not in (
+                    "TRADED", "PART_TRADED", "CANCELLED", "REJECTED", "EXPIRED"):
+                lvl = ev["trigger"] or ev["price"] or ev["sl_price"]
+                if lvl:
+                    self._pending_sl[ev["symbol"]] = (lvl, ev["now"])
+                return None
             return self._open_new(ev)
         return self._update_slot(slot, ev)
 
@@ -208,15 +272,15 @@ class PositionTracker:
             return None
         if is_pure_target_leg and ev["leg"]:
             return None
-        # Also block lone trigger-price SL pending with no entry (SELL STOP with trigger but no price)
-        if ev["trigger"] and "STOP_LOSS" in ev["otype"] and not ev["price"]:
-            # this shape is always an SL leg, never an entry
+        # Lone trigger-price SL leg with no entry (SELL STOP with trigger but
+        # no price) is always an SL leg, never an entry — any otype shape.
+        if ev["trigger"] and not ev["price"]:
             return None
         # Only open on entry-side events, not on lone exits
         pos = Position(
             symbol=ev["symbol"], side=ev["side"] or "BUY",
             entry_price=ev["price"], entry_status=ev["status"] or "TRADED",
-            entry_time=ev["ts"], qty=ev["qty"], product=ev["product"],
+            entry_time=ev["ts"], qty=ev["qty"], lot_size=ev.get("lot_size", 0), product=ev["product"],
             order_id=ev["order_no"], remarks=ev["remarks"],
         )
         # Super-order placement already carries the stop level.
@@ -226,6 +290,12 @@ class PositionTracker:
             pos.sl = ev["trigger"]
         parsed = _parse_remarks(ev["remarks"])
         pos.sl = pos.sl if pos.sl is not None else parsed.get("sl")
+        # SL level seen before this entry (bracket leg ordering): apply it so
+        # the first Telegram message already shows the SL.
+        if pos.sl is None and ev["symbol"] in self._pending_sl:
+            lvl, at = self._pending_sl[ev["symbol"]]
+            if abs(ev["now"] - at) <= max(self.window_sec, 4 * 3600):
+                pos.sl = lvl
         slot = _OpenSlot(position=pos, entry_side=pos.side, opened_at=ev["now"], algo=ev["algo"])
         self._by_sym[self._sym_key(pos.symbol, pos.side)] = slot
         if ev["algo"]:
@@ -234,26 +304,47 @@ class PositionTracker:
 
     def _update_slot(self, slot: _OpenSlot, ev: dict) -> tuple[str, Position] | None:
         p = slot.position
+        # fill lot_size if entry missed it but exit has it
+        if not p.lot_size and ev.get("lot_size"):
+            p.lot_size = ev["lot_size"]
         changed = False
-        if self._is_sl(ev):
+        if self._is_sl(ev) or self._stop_like(slot, ev):
             lvl = ev["trigger"] or ev["price"] or ev["sl_price"]
             if lvl and p.sl != lvl:
                 p.sl = lvl
                 changed = True
             if ev["status"] == "TRADED":
-                p.exit_info = f"🔻SL hit @ {_lvl_str(lvl)}"
+                p.exit_info = _append_exit(p.exit_info, f"🔻SL hit @ {_lvl_str(lvl)}")
                 slot.closed = True
                 return ("edit", p)
         elif self._is_target(ev) or ev["side"] != slot.entry_side:
             # Opposite-side leg = exit (limit target or market square-off).
-            # Target-hit labels are OFF by design (done manually) — exits only
-            # advance the close counter. Never fall through to averaging below.
+            # Exit is always labelled (price + lots); partial target books as
+            # "T1 booked", fills on losing/unknown side as the trade joins
+            # "Exited", and SL hits stay "🔻SL hit". Slot closes once the
+            # cumulative exited qty reaches the entry qty.
             if ev["status"] == "TRADED":
-                slot.exited_qty += ev["qty"] or 0
-                if p.qty and slot.exited_qty >= p.qty:
+                q = ev["qty"] or 0
+                slot.exited_qty += q
+                full = (not p.qty) or (p.qty and slot.exited_qty >= p.qty)
+                if full:
                     slot.closed = True
-                elif not p.qty:
-                    slot.closed = True  # qty unknown: first exit closes
+                price = ev["price"]
+                if price:
+                    px = f"₹{_lvl_str(price)}"
+                    ls = p.lot_size or ev.get("lot_size", 0)
+                    sz = f" {_lots(q, ls)}" if q else ""
+                    if full:
+                        line = f"✅ Exited{sz} @ {px}"
+                    elif self._is_target(ev):
+                        line = f"✅ T1 booked{sz} @ {px}"
+                    else:
+                        line = f"✅ Booked{sz} @ {px}"
+                    if not full and p.qty:
+                        rem = p.qty - slot.exited_qty
+                        if rem > 0:
+                            line += f" · {_lots(rem, ls)} remaining"
+                    p.exit_info = _append_exit(p.exit_info, line)
                 return ("edit", p)
         else:
             # same-side scale-in / modification: refresh avg/qty
